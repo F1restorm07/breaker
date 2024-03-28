@@ -2,13 +2,25 @@
 
 use core::mem::MaybeUninit;
 
-pub struct Router<'r, Handler, const CAP: usize = 50, const SEG_CAP: usize = 4> {
+// the api for Router is heavily stolen from the heapless crate's Vec implementation
+pub struct Router<'r, Handler, const CAP: usize, const SEG_CAP: usize> {
     len: usize,
     routes: [MaybeUninit<Route<'r, Handler, SEG_CAP>>; CAP],
 }
 
 impl<'r, Handler, const CAP: usize, const SEG_CAP: usize> Default for Router<'r, Handler, CAP, SEG_CAP> {
     fn default() -> Self { Self::new() }
+}
+
+impl<'r, Handler, const CAP: usize, const SEG_CAP: usize> core::ops::Deref for Router<'r, Handler, CAP, SEG_CAP> {
+    type Target = [Route<'r, Handler, SEG_CAP>];
+    fn deref(&self) -> &Self::Target { self.as_slice() }
+}
+
+impl<Handler: core::fmt::Debug, const CAP: usize, const SEG_CAP: usize> core::fmt::Debug for Router<'_, Handler, CAP, SEG_CAP> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        <[Route<'_, Handler, SEG_CAP>] as core::fmt::Debug>::fmt(self, f)
+    }
 }
 
 impl<'r, Handler, const CAP: usize, const SEG_CAP: usize> Router<'r, Handler, CAP, SEG_CAP> {
@@ -21,7 +33,8 @@ impl<'r, Handler, const CAP: usize, const SEG_CAP: usize> Router<'r, Handler, CA
 
     pub fn add_route(&mut self, route: Route<'r, Handler, SEG_CAP>) -> Result<(), Route<'_, Handler, SEG_CAP>> {
         if self.len == CAP { return Err(route); }
-        self.routes[self.len].write(route); self.len += 1;
+        self.routes[self.len].write(route);
+        self.len += 1;
         Ok(())
     }
 
@@ -34,8 +47,16 @@ impl<'r, Handler, const CAP: usize, const SEG_CAP: usize> Router<'r, Handler, CA
         }).map(move |r| unsafe { r.assume_init_ref() })
 
     }
+
+    pub const fn len(&self) -> usize { self.len }
+    pub const fn is_empty(&self) -> bool { self.len == 0 }
+
+    pub fn as_slice(&self) -> &[Route<'r, Handler, SEG_CAP>] {
+        unsafe { core::slice::from_raw_parts(self.routes.as_ptr() as *const Route<'r, Handler, SEG_CAP>, self.len) }
+    }
 }
 
+#[derive(Debug)]
 pub struct Route<'r, Handler, const CAP: usize> {
     len: usize,
     segments: [MaybeUninit<Segment<'r>>; CAP],
@@ -72,6 +93,7 @@ impl<'r, Handler, const CAP: usize> Route<'r, Handler, CAP> {
     pub fn handler(&self) -> &Handler { &self.handler }
 }
 
+#[derive(Debug)]
 pub enum Segment<'s> {
     Constant(&'s str),
     Named(&'s str),
@@ -101,5 +123,19 @@ fn match_segment(needle: &str, seg: &Segment<'_>, offset: usize) -> bool {
         Segment::Constant(s) => needle[offset..].starts_with(s),
         Segment::Named(s) => needle[offset+1..].starts_with(s),
         Segment::Wildcard => needle[offset..].starts_with('*'),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+
+    #[test]
+    fn router_add_route() {
+        let mut router = Router::<(), 50, 4>::new();
+        router.add_route(Route::new("/:greetings/hi", ())).unwrap();
+        std::println!("{router:#?}");
+        panic!();
     }
 }
