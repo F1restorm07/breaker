@@ -56,11 +56,21 @@ impl<'r, Handler, const CAP: usize, const SEG_CAP: usize> Router<'r, Handler, CA
     }
 }
 
-#[derive(Debug)]
 pub struct Route<'r, Handler, const CAP: usize> {
     len: usize,
     segments: [MaybeUninit<Segment<'r>>; CAP],
     handler: Handler
+}
+
+impl<'r, Handler, const CAP: usize> core::ops::Deref for Route<'r, Handler, CAP> {
+    type Target = [Segment<'r>];
+    fn deref(&self) -> &Self::Target { self.as_slice() }
+}
+
+impl<'r, Handler: core::fmt::Debug, const CAP: usize> core::fmt::Debug for Route<'r, Handler, CAP> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        <[Segment<'r>] as core::fmt::Debug>::fmt(self, f)
+    }
 }
 
 impl<'r, Handler, const CAP: usize> Route<'r, Handler, CAP> {
@@ -91,6 +101,12 @@ impl<'r, Handler, const CAP: usize> Route<'r, Handler, CAP> {
     }
 
     pub fn handler(&self) -> &Handler { &self.handler }
+    pub const fn len(&self) -> usize { self.len }
+    pub const fn is_empty(&self) -> bool { self.len == 0 }
+
+    pub fn as_slice(&self) -> &[Segment<'r>] {
+        unsafe { core::slice::from_raw_parts(self.segments.as_ptr() as *const Segment<'r>, self.len) }
+    }
 }
 
 #[derive(Debug)]
