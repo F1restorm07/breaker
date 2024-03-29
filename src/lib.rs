@@ -103,10 +103,11 @@ impl<'r, Handler, const CAP: usize> Route<'r, Handler, CAP> {
         Ok(Self { len: seg_cnt, segments, handler })
     }
     fn full_match(&self, needle: &str) -> bool {
-        // TODO: check if a match matched ALL the needle path segments
-        needle
-            .trim_matches('/')
-            .split('/')
+        let needle_split = needle.trim_matches('/').split('/');
+        // the route cannot possibly match all the needle's segments
+        if needle_split.clone().count() > self.len { return false; }
+
+        needle_split
             .zip(&self.segments[..self.len])
             .all(|(needle, seg)| match_segment(needle, unsafe { seg.assume_init_ref() }))
     }
@@ -134,16 +135,16 @@ pub enum Segment<'s> {
     Slash,
 }
 
-impl Segment<'_> {
-    const fn len(&self) -> usize {
-        match self {
-            Self::Constant(s) => s.len(),
-            Self::Named(s) => s.len()+1,
-            Self::Wildcard => 1,
-            _ => 0,
-        }
-    }
-}
+// impl Segment<'_> {
+//     const fn len(&self) -> usize {
+//         match self {
+//             Self::Constant(s) => s.len(),
+//             Self::Named(s) => s.len()+1,
+//             Self::Wildcard => 1,
+//             _ => 0,
+//         }
+//     }
+// }
 
 fn parse_segment(input: &'_ str) -> Segment<'_> {
     // TODO: more complex parsing rules
@@ -156,12 +157,12 @@ fn parse_segment(input: &'_ str) -> Segment<'_> {
 }
 fn match_segment(needle: &str, seg: &Segment<'_>) -> bool {
     let needle_len = needle.len();
-    #[cfg(test)] { extern crate std; std::println!("{needle}"); }
+    // #[cfg(test)] { extern crate std; std::println!("{needle}"); }
 
     match seg {
         Segment::Constant(s) => s.get(..needle_len).is_some_and(|s| needle.starts_with(s)),
         Segment::Named(_) => !needle.is_empty(),
-        Segment::Wildcard => needle.starts_with('*') && !needle[1..].contains('*'),
+        Segment::Wildcard => !needle.is_empty(),
         _ => false
     }
 }
@@ -180,10 +181,6 @@ mod tests {
         router.add_route(Route::new("/:greeting/hi", ()).unwrap()).unwrap();
         router.add_route(Route::new("/:greeting/hi/bye", ()).unwrap()).unwrap();
         router.add_route(Route::new("/:greeting/*", ()).unwrap()).unwrap();
-
-        // std::println!("{router:#?}");
-        // std::println!("{:#?}", router.find("gr"));
-        // std::println!("{:#?}", router.find(":greeting"));
 
         router.filter("/g").for_each(|r| std::println!("{r:?}"));
         router.filter("/hello/hi").for_each(|r| std::println!("{r:?}"));
