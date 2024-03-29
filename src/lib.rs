@@ -74,23 +74,36 @@ impl<'r, Handler: core::fmt::Debug, const CAP: usize> core::fmt::Debug for Route
 }
 
 impl<'r, Handler, const CAP: usize> Route<'r, Handler, CAP> {
-    pub fn new(route: &'r str, handler: Handler) -> Self {
+    pub fn new(route: &'r str, handler: Handler) -> Result<Self, RouteError> {
         let route = route.trim_matches('/');
+
         let mut segments: [MaybeUninit<Segment<'r>>; CAP] =
             unsafe { MaybeUninit::uninit().assume_init() };
-        let route_segments = route.split('/');
+        let mut route_segments = route.split('/');
         let mut seg_cnt = 0;
 
-        for (idx, seg) in route_segments.enumerate() {
+        if route.is_empty() {
+            segments[0].write(Segment::Constant("/"));
+            return Ok(Self { len: 1, segments, handler })
+        }
+
+
+        for (idx, seg) in route_segments.clone().enumerate() {
             seg_cnt+=1;
-            if idx == CAP { break; }
+            if idx == CAP { return Err(RouteError::TooManySegments); }
+
+            let peeked = route_segments.nth(idx+1);
+            if peeked.is_some() && parse_segment(seg) == Segment::Wildcard {
+                return Err(RouteError::WildcardMustBeLast);
+            }
             segments[idx].write(parse_segment(seg));
         }
 
-        Self { len: seg_cnt, segments, handler }
+        Ok(Self { len: seg_cnt, segments, handler })
     }
     fn full_match(&self, needle: &str) -> bool {
         let mut offset = 0;
+        let needle = needle.trim_matches('/');
 
         for seg in &self.segments[..self.len] {
             let seg = unsafe { seg.assume_init_ref() };
@@ -110,10 +123,17 @@ impl<'r, Handler, const CAP: usize> Route<'r, Handler, CAP> {
 }
 
 #[derive(Debug)]
+pub enum RouteError {
+    TooManySegments,
+    WildcardMustBeLast,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Segment<'s> {
     Constant(&'s str),
     Named(&'s str),
     Wildcard,
+    Slash,
 }
 
 impl Segment<'_> {
@@ -122,12 +142,14 @@ impl Segment<'_> {
             Self::Constant(s) => s.len(),
             Self::Named(s) => s.len()+1,
             Self::Wildcard => 1,
+            _ => 0,
         }
     }
 }
 
 fn parse_segment(input: &'_ str) -> Segment<'_> {
-    // TODO: do better than this
+    // TODO: more complex parsing rules
+    // |---- are more complex rules necessary?
     match &input[0..1] {
         ":" => Segment::Named(&input[1..]),
         "*" => Segment::Wildcard,
@@ -135,23 +157,39 @@ fn parse_segment(input: &'_ str) -> Segment<'_> {
     }
 }
 fn match_segment(needle: &str, seg: &Segment<'_>, offset: usize) -> bool {
+    let slash = needle.find('/').unwrap_or(needle.len());
+    let needle = &needle[offset..slash];
+    let needle_len = needle.len();
+
+    // TODO: partial matches (match first set of characters) + substring matches?
     match seg {
-        Segment::Constant(s) => needle[offset..].starts_with(s),
-        Segment::Named(s) => needle[offset+1..].starts_with(s),
-        Segment::Wildcard => needle[offset..].starts_with('*'),
+        Segment::Constant(s) => needle.starts_with(s.get(..needle_len).unwrap()), // TODO: better none handling (what do i put here for matching first n chars of &str)
+        Segment::Named(_) => needle.starts_with(':') && !needle.is_empty(), // TODO: capture up to next slash (better matching here)
+        Segment::Wildcard => needle.starts_with('*') && !needle[1..].contains('*'),
+        _ => false
     }
 }
 
-#[cfg(test)]
-mod tests {
-    extern crate std;
-    use super::*;
-
-    #[test]
-    fn router_add_route() {
-        let mut router = Router::<(), 50, 4>::new();
-        router.add_route(Route::new("/:greetings/hi", ())).unwrap();
-        std::println!("{router:#?}");
-        panic!();
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     extern crate std;
+//     use super::*;
+//
+//     #[test]
+//     fn router_add_route() {
+//         let mut router = Router::<(), 50, 4>::new();
+//         router.add_route(Route::new("/", ()).unwrap()).unwrap();
+//         router.add_route(Route::new("/:greeting", ()).unwrap()).unwrap();
+//         router.add_route(Route::new("/greetings", ()).unwrap()).unwrap();
+//         router.add_route(Route::new("/:greeting/hi", ()).unwrap()).unwrap();
+//         router.add_route(Route::new("/:greeting/hi/bye", ()).unwrap()).unwrap();
+//         router.add_route(Route::new("/:greeting/*", ()).unwrap()).unwrap();
+//
+//         // std::println!("{router:#?}");
+//         // std::println!("{:#?}", router.find("gr"));
+//         // std::println!("{:#?}", router.find(":greeting"));
+//
+//         router.filter("/g").for_each(|r| std::println!("{r:?}"));
+//         panic!();
+//     }
+// }
