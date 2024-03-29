@@ -2,7 +2,8 @@
 
 use core::mem::MaybeUninit;
 
-// the api for Router is heavily stolen from the heapless crate's Vec implementation
+// the api for Router and Route is heavily stolen from the heapless crate's Vec implementation
+
 pub struct Router<'r, Handler, const CAP: usize, const SEG_CAP: usize> {
     len: usize,
     routes: [MaybeUninit<Route<'r, Handler, SEG_CAP>>; CAP],
@@ -102,15 +103,12 @@ impl<'r, Handler, const CAP: usize> Route<'r, Handler, CAP> {
         Ok(Self { len: seg_cnt, segments, handler })
     }
     fn full_match(&self, needle: &str) -> bool {
-        let mut offset = 0;
-        let needle = needle.trim_matches('/');
-
-        for seg in &self.segments[..self.len] {
-            let seg = unsafe { seg.assume_init_ref() };
-            if offset >= needle.len() { return true; }
-            if match_segment(needle, seg, offset) { offset+=seg.len(); continue; } else { return false; }
-        }
-        true
+        // TODO: check if a match matched ALL the needle path segments
+        needle
+            .trim_matches('/')
+            .split('/')
+            .zip(&self.segments[..self.len])
+            .all(|(needle, seg)| match_segment(needle, unsafe { seg.assume_init_ref() }))
     }
 
     pub fn handler(&self) -> &Handler { &self.handler }
@@ -156,40 +154,39 @@ fn parse_segment(input: &'_ str) -> Segment<'_> {
         _ => Segment::Constant(input)
     }
 }
-fn match_segment(needle: &str, seg: &Segment<'_>, offset: usize) -> bool {
-    let slash = needle.find('/').unwrap_or(needle.len());
-    let needle = &needle[offset..slash];
+fn match_segment(needle: &str, seg: &Segment<'_>) -> bool {
     let needle_len = needle.len();
+    #[cfg(test)] { extern crate std; std::println!("{needle}"); }
 
-    // TODO: partial matches (match first set of characters) + substring matches?
     match seg {
-        Segment::Constant(s) => needle.starts_with(s.get(..needle_len).unwrap()), // TODO: better none handling (what do i put here for matching first n chars of &str)
-        Segment::Named(_) => needle.starts_with(':') && !needle.is_empty(), // TODO: capture up to next slash (better matching here)
+        Segment::Constant(s) => s.get(..needle_len).is_some_and(|s| needle.starts_with(s)),
+        Segment::Named(_) => !needle.is_empty(),
         Segment::Wildcard => needle.starts_with('*') && !needle[1..].contains('*'),
         _ => false
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     extern crate std;
-//     use super::*;
-//
-//     #[test]
-//     fn router_add_route() {
-//         let mut router = Router::<(), 50, 4>::new();
-//         router.add_route(Route::new("/", ()).unwrap()).unwrap();
-//         router.add_route(Route::new("/:greeting", ()).unwrap()).unwrap();
-//         router.add_route(Route::new("/greetings", ()).unwrap()).unwrap();
-//         router.add_route(Route::new("/:greeting/hi", ()).unwrap()).unwrap();
-//         router.add_route(Route::new("/:greeting/hi/bye", ()).unwrap()).unwrap();
-//         router.add_route(Route::new("/:greeting/*", ()).unwrap()).unwrap();
-//
-//         // std::println!("{router:#?}");
-//         // std::println!("{:#?}", router.find("gr"));
-//         // std::println!("{:#?}", router.find(":greeting"));
-//
-//         router.filter("/g").for_each(|r| std::println!("{r:?}"));
-//         panic!();
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+
+    #[test]
+    fn router_test_route() {
+        let mut router = Router::<(), 50, 4>::new();
+        router.add_route(Route::new("/", ()).unwrap()).unwrap();
+        router.add_route(Route::new("/:greeting", ()).unwrap()).unwrap();
+        router.add_route(Route::new("/greetings", ()).unwrap()).unwrap();
+        router.add_route(Route::new("/:greeting/hi", ()).unwrap()).unwrap();
+        router.add_route(Route::new("/:greeting/hi/bye", ()).unwrap()).unwrap();
+        router.add_route(Route::new("/:greeting/*", ()).unwrap()).unwrap();
+
+        // std::println!("{router:#?}");
+        // std::println!("{:#?}", router.find("gr"));
+        // std::println!("{:#?}", router.find(":greeting"));
+
+        router.filter("/g").for_each(|r| std::println!("{r:?}"));
+        router.filter("/hello/hi").for_each(|r| std::println!("{r:?}"));
+        panic!();
+    }
+}
